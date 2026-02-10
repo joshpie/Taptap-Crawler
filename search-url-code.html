@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>URL Code Phrase Checker</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --ok: #15803d;
+      --missing: #b91c1c;
+      --muted: #64748b;
+      --card: #f8fafc;
+      --border: #cbd5e1;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(180deg, #f1f5f9, #ffffff 30%);
+      color: #0f172a;
+    }
+
+    .container {
+      max-width: 980px;
+      margin: 2rem auto;
+      padding: 1rem;
+    }
+
+    .panel {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      box-shadow: 0 8px 24px rgba(2, 6, 23, 0.06);
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 1.45rem;
+    }
+
+    .grid {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      margin-bottom: 1rem;
+    }
+
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+    }
+
+    textarea,
+    input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 0.65rem;
+      box-sizing: border-box;
+      font: inherit;
+      background: #fff;
+      color: #0f172a;
+    }
+
+    textarea {
+      min-height: 150px;
+      resize: vertical;
+    }
+
+    button {
+      appearance: none;
+      border: none;
+      border-radius: 0.6rem;
+      padding: 0.7rem 1rem;
+      background: #2563eb;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.7;
+      cursor: wait;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-top: 0.5rem;
+    }
+
+    .summary {
+      margin: 1rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .results {
+      display: grid;
+      gap: 0.7rem;
+    }
+
+    .result-item {
+      border: 1px solid var(--border);
+      border-radius: 0.6rem;
+      background: var(--card);
+      padding: 0.7rem;
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    .status {
+      white-space: nowrap;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .status.ok {
+      color: var(--ok);
+    }
+
+    .status.missing {
+      color: var(--missing);
+    }
+
+    .error {
+      margin-top: 1rem;
+      color: var(--missing);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="panel">
+      <h1>URL Code Phrase Checker</h1>
+      <p class="hint">Paste a URL and a list of phrases/words/code snippets (one per line). The tool fetches the page source, checks each entry with flexible partial matching, and marks matches with ✅ and missing items with ❌ Missing.</p>
+
+      <div class="grid">
+        <div>
+          <label for="urlInput">URL</label>
+          <input id="urlInput" type="url" placeholder="https://example.com" />
+          <p class="hint">Tip: Some websites block browser fetch requests (CORS). If that happens, try your own domain or a CORS-enabled endpoint.</p>
+        </div>
+        <div>
+          <label for="phraseInput">Phrases / Words / Code (one per line)</label>
+          <textarea id="phraseInput" placeholder="console.log\nfunction init()\n<meta charset"></textarea>
+        </div>
+      </div>
+
+      <button id="runBtn">Check URL Source</button>
+      <div id="summary" class="summary"></div>
+      <div id="results" class="results"></div>
+      <div id="error" class="error" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script>
+    const urlInput = document.getElementById('urlInput');
+    const phraseInput = document.getElementById('phraseInput');
+    const runBtn = document.getElementById('runBtn');
+    const summaryEl = document.getElementById('summary');
+    const resultsEl = document.getElementById('results');
+    const errorEl = document.getElementById('error');
+
+    const escapeHtml = (value) =>
+      value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+
+    const parseTerms = (rawText) =>
+      rawText
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+
+    const normalize = (value) => value.toLowerCase().replace(/\s+/g, ' ').trim();
+
+    const buildLoosePhrasePattern = (term) => {
+      const escapedWords = normalize(term)
+        .split(' ')
+        .filter(Boolean)
+        .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
+      if (escapedWords.length === 0) {
+        return null;
+      }
+
+      return new RegExp(escapedWords.join('.*?'), 'i');
+    };
+
+    const isPartialMatch = (source, term) => {
+      const normalizedSource = normalize(source);
+      const normalizedTerm = normalize(term);
+
+      if (!normalizedTerm) {
+        return false;
+      }
+
+      if (normalizedSource.includes(normalizedTerm)) {
+        return true;
+      }
+
+      const loosePattern = buildLoosePhrasePattern(normalizedTerm);
+      return loosePattern ? loosePattern.test(normalizedSource) : false;
+    };
+
+    const renderResults = (checkedItems) => {
+      resultsEl.innerHTML = checkedItems
+        .map(({ term, found }) => {
+          const statusClass = found ? 'ok' : 'missing';
+          const icon = found ? '✅' : '❌';
+          const label = found ? 'Found' : 'Missing';
+          return `
+            <div class="result-item">
+              <code>${escapeHtml(term)}</code>
+              <span class="status ${statusClass}">${icon} ${label}</span>
+            </div>
+          `;
+        })
+        .join('');
+    };
+
+    runBtn.addEventListener('click', async () => {
+      errorEl.textContent = '';
+      summaryEl.textContent = '';
+      resultsEl.innerHTML = '';
+
+      const url = urlInput.value.trim();
+      const terms = parseTerms(phraseInput.value);
+
+      if (!url) {
+        errorEl.textContent = 'Please enter a URL.';
+        return;
+      }
+
+      if (terms.length === 0) {
+        errorEl.textContent = 'Please add at least one phrase/word/code snippet.';
+        return;
+      }
+
+      runBtn.disabled = true;
+      runBtn.textContent = 'Checking...';
+
+      try {
+        const response = await fetch(url, { method: 'GET' });
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}`);
+        }
+
+        const source = await response.text();
+        const checkedItems = terms.map((term) => ({
+          term,
+          found: isPartialMatch(source, term),
+        }));
+
+        const foundCount = checkedItems.filter((item) => item.found).length;
+        const missingCount = checkedItems.length - foundCount;
+
+        summaryEl.textContent = `Found ${foundCount} of ${checkedItems.length}. Missing ${missingCount}.`;
+        renderResults(checkedItems);
+      } catch (error) {
+        errorEl.textContent = `Unable to fetch URL source: ${error.message}`;
+      } finally {
+        runBtn.disabled = false;
+        runBtn.textContent = 'Check URL Source';
+      }
+    });
+  </script>
+</body>
+</html>
