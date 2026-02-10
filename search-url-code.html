@@ -141,7 +141,7 @@
   <div class="container">
     <div class="panel">
       <h1>URL Code Phrase Checker</h1>
-      <p class="hint">Paste a URL and a list of phrases/words/code snippets (one per line). The tool fetches the page source, checks each entry, and marks matches with ✅ and missing items with ❌ Missing.</p>
+      <p class="hint">Paste a URL and a list of phrases/words/code snippets (one per line). The tool fetches the page source, checks each entry with flexible partial matching, and marks matches with ✅ and missing items with ❌ Missing.</p>
 
       <div class="grid">
         <div>
@@ -183,6 +183,37 @@
         .split('\n')
         .map((line) => line.trim())
         .filter((line) => line.length > 0);
+
+    const normalize = (value) => value.toLowerCase().replace(/\s+/g, ' ').trim();
+
+    const buildLoosePhrasePattern = (term) => {
+      const escapedWords = normalize(term)
+        .split(' ')
+        .filter(Boolean)
+        .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
+      if (escapedWords.length === 0) {
+        return null;
+      }
+
+      return new RegExp(escapedWords.join('.*?'), 'i');
+    };
+
+    const isPartialMatch = (source, term) => {
+      const normalizedSource = normalize(source);
+      const normalizedTerm = normalize(term);
+
+      if (!normalizedTerm) {
+        return false;
+      }
+
+      if (normalizedSource.includes(normalizedTerm)) {
+        return true;
+      }
+
+      const loosePattern = buildLoosePhrasePattern(normalizedTerm);
+      return loosePattern ? loosePattern.test(normalizedSource) : false;
+    };
 
     const renderResults = (checkedItems) => {
       resultsEl.innerHTML = checkedItems
@@ -230,7 +261,7 @@
         const source = await response.text();
         const checkedItems = terms.map((term) => ({
           term,
-          found: source.includes(term),
+          found: isPartialMatch(source, term),
         }));
 
         const foundCount = checkedItems.filter((item) => item.found).length;
